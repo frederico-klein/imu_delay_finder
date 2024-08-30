@@ -10,7 +10,7 @@ from std_msgs.msg import Float64
 from collections import deque
 
 sampling_rate = 100.0
-seconds_to_record = 1.5
+seconds_to_record = 2.5
 
 LIST_SIZE= int(sampling_rate*seconds_to_record) ## if it is 100Hz, then it will be 1 second
 
@@ -18,8 +18,8 @@ imu_list1 = deque([], maxlen=LIST_SIZE)
 imu_list2 = deque([], maxlen=LIST_SIZE)
 
 def callback(some_deque : deque, imu_msg : Imu, name: str) -> None:
-    xy = (imu_msg.header.stamp.to_sec(), imu_msg.angular_velocity.x)
-    rospy.logdebug(name+" "+str(xy))
+    xy = (imu_msg.header.stamp.to_sec(), imu_msg)
+    #rospy.logdebug(name+" "+str(xy))
     some_deque.append(xy)
 
 
@@ -31,10 +31,51 @@ rospy.Subscriber("imu2", Imu, callback=lambda msg: callback(imu_list2,msg,"2") )
 r = rospy.Rate(10)
 
 pub = rospy.Publisher("d", Float64)
-pub1= rospy.Publisher("d_opt", Float64)
 
 #cumulative_distribution = []
 #num_frames = 1
+
+def look_at_signal(t1,t2,y1,y2, new_time):
+    
+    # Linear interpolation for resampling
+    interp1 = interp1d(t1, y1, kind='linear')
+    interp2 = interp1d(t2, y2, kind='linear')
+
+    # Resample both signals
+    y1_ = interp1(new_time)
+    y2_ = interp2(new_time)
+
+    mode = "full"
+    correlation = signal.correlate(y1_, y2_, mode=mode, method='direct')
+    lags = signal.correlation_lags(y1_.size, y2_.size, mode=mode)
+    found_delay = lags[np.argmax(correlation)]
+
+    #print(correlation.size)
+
+    print(f"idk:{-found_delay/sampling_rate} : {np.sum(correlation)}")
+    #val.data = found_delay/sampling_rate
+    #val.data = -(found_delay)/sampling_rate ## draw the graphs and you will see why
+    return correlation, lags
+
+def explode_imu_msg_list(Iy):
+    ang_velocity_x= []
+    ang_velocity_y= []
+    ang_velocity_z= []
+    linear_acceleration_x= []
+    linear_acceleration_y= []
+    linear_acceleration_z= []
+
+    for iIy in Iy:
+        ang_velocity_x.append(iIy.angular_velocity.x)
+        ang_velocity_y.append(iIy.angular_velocity.y)
+        ang_velocity_z.append(iIy.angular_velocity.z)
+        linear_acceleration_x.append(iIy.linear_acceleration.x)
+        linear_acceleration_y.append(iIy.linear_acceleration.y)
+        linear_acceleration_z.append(iIy.linear_acceleration.z)
+        
+    return  np.array(ang_velocity_x), np.array(ang_velocity_y), np.array(ang_velocity_z), np.array(linear_acceleration_x), np.array(linear_acceleration_y), np.array(linear_acceleration_z),
+
+coor = deque(maxlen=10)
 
 while not rospy.is_shutdown() :
     
@@ -47,13 +88,15 @@ while not rospy.is_shutdown() :
     #rospy.loginfo(imu_list2)
 
 
-    t1, y1 = zip(*imu_list1)
+    t1, Iy1 = zip(*imu_list1)
 
-    t2, y2 = zip(*imu_list2)
+    t2, Iy2 = zip(*imu_list2)
 
-    t1, y1 = np.array(t1), np.array(y1)
-    ## but i only want the first listsize, right?
-    t2, y2 = np.array(t2), np.array(y2)
+    t1 = np.array(t1)
+    t2 = np.array(t2)
+    
+    a1,b1,c1,d1,e1,f1 = explode_imu_msg_list(Iy1)
+    a2,b2,c2,d2,e2,f2 = explode_imu_msg_list(Iy2)
 
     publication_lag = np.mean(t1-t2)
     ## I don't care about the publication delay
@@ -71,52 +114,36 @@ while not rospy.is_shutdown() :
 
     # New common time vector for resampling
     new_time = np.linspace(start_time, end_time, int((end_time - start_time) * sampling_rate))
+    
 
-    # Linear interpolation for resampling
-    interp1 = interp1d(t1, y1, kind='linear')
-    interp2 = interp1d(t2, y2, kind='linear')
+    coora, lags = look_at_signal(t1,t2,a1,a2, new_time)
+    coorb, lags = look_at_signal(t1,t2,b1,b2, new_time)
+    coorc, lags = look_at_signal(t1,t2,c1,c2, new_time)
+    coord, lags = look_at_signal(t1,t2,d1,d2, new_time)
+    coore, lags = look_at_signal(t1,t2,e1,e2, new_time)
+    coorf, lags = look_at_signal(t1,t2,f1,f2, new_time)
 
-    # Resample both signals
-    y1_ = interp1(new_time)
-    y2_ = interp2(new_time)
+    coor.append(coora +coorb +coorc +coord +coore +coorf)
 
-
-    #y1_ = np.array(imu_list1)
-    #y2_ = np.array(imu_list2)
-    #mode = "same"
-    #mode = "valid"
-    mode = "full"
-    correlation = signal.correlate(y1_, y2_, mode=mode, method='direct')
-    ## lets penalize higher value delays
-
-    #for i in range(len(correlation)):
-    #    correlation[i] *= 1./((i/LIST_SIZE-1.)**2./200+1.)
-
-    lags = signal.correlation_lags(y1_.size, y2_.size, mode=mode)
-    found_delay = lags[np.argmax(correlation)]
-    #found_delay = find_delay.find_delay(list(imu_list1), list(imu_list2), freq_array_1=100, freq_array_2=100, compute_envelope=False, verbosity=0)
-    #rospy.logdebug(found_delay)
-    #rospy.loginfo(f"i think this is the index, {found_delay}, so this should be the lag delay {found_delay/sampling_rate}[s],\n\t\t\t but combined with the publication lag it should be something like {found_delay/sampling_rate + publication_lag}")
+    if len(coor) < coor.maxlen:
+        r.sleep()
+        continue
+    else:
+        cor_all = np.sum(coor,axis=0)
     val = Float64()
-
+    
     #print(correlation.size)
+    found_delay = lags[np.argmax(cor_all)]
 
+    #total_delay+=found_delay/sampling_rate
+    #num_samples+=1
     print(f"idk:{-found_delay/sampling_rate}")
+    #print(f"idk:{-total_delay/num_samples}")
     #val.data = found_delay/sampling_rate
     val.data = -(found_delay)/sampling_rate ## draw the graphs and you will see why
-    #val.data = (np.argmax(correlation)-LIST_SIZE)/sampling_rate
 
-    #if len(cumulative_distribution) == 0:
-    #    cumulative_distribution = correlation
-    #else:
 
-    #    cumulative_distribution += correlation/num_frames
-    #    num_frames+=1
 
-    #val_opt = Float64()
-    
-    #val_opt.data = (np.argmax(cumulative_distribution)-LIST_SIZE)/sampling_rate
-    #pub1.publish(val_opt)
     pub.publish(val)
     r.sleep()
     #exit()
