@@ -103,7 +103,7 @@ while not rospy.is_shutdown() :
 
     print(f"idk:{-found_delay/sampling_rate}")
     #val.data = found_delay/sampling_rate
-    val.data = -(np.argmax(correlation)-LIST_SIZE)/sampling_rate ## draw the graphs and you will see why
+    val.data = -(found_delay)/sampling_rate ## draw the graphs and you will see why
     #val.data = (np.argmax(correlation)-LIST_SIZE)/sampling_rate
 
     #if len(cumulative_distribution) == 0:
