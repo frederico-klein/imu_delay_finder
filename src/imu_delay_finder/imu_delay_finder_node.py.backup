@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+
+from scipy import signal
+from scipy.interpolate import interp1d
+
+import numpy as np
+import rospy
+from sensor_msgs.msg import Imu 
+
+from collections import deque
+
+sampling_rate = 100.0
+seconds_to_record = 1.0
+
+LIST_SIZE= int(sampling_rate*seconds_to_record) ## if it is 100Hz, then it will be 1 second
+
+imu_list1 = deque([], maxlen=2*LIST_SIZE)
+imu_list2 = deque([], maxlen=LIST_SIZE)
+
+def callback(some_deque : deque, imu_msg : Imu, name: str) -> None:
+    xy = (imu_msg.header.stamp.to_sec(), imu_msg.angular_velocity.x)
+    rospy.logdebug(name+" "+str(xy))
+    some_deque.append(xy)
+
+
+
+
+
+rospy.init_node("find_delay_between_imus")
+
+rospy.Subscriber("imu1", Imu, callback=lambda msg: callback(imu_list1,msg,"1") )
+rospy.Subscriber("imu2", Imu, callback=lambda msg: callback(imu_list2,msg,"2") )
+
+r = rospy.Rate(10)
+
+while not rospy.is_shutdown() :
+    
+    if len(imu_list1) < 2*LIST_SIZE or len(imu_list2) < LIST_SIZE:
+        r.sleep()
+        continue
+    rospy.logdebug(f"time 1 {imu_list1[-1][0]}, time 2: {imu_list2[-1][0]}")
+
+    rospy.loginfo(imu_list1)
+    rospy.loginfo(imu_list2)
+
+
+    t1, y1 = zip(*imu_list1)
+
+    t2, y2 = zip(*imu_list2)
+
+    t1, y1 = np.array(t1), np.array(y1)
+    t2, y2 = np.array(t2), np.array(y2)
+
+    publication_lag = np.mean(t1[-LIST_SIZE:]-t2)
+    ## I don't care about the publication delay
+    rospy.loginfo(f" (we don't care about this:) publication_lag: {publication_lag} [s]")
+
+
+    # Find overlapping time range
+    ws = np.argmax([t1[0], t2[0]])
+    we = np.argmin([t1[-1], t2[-1]])
+
+    start_time = [t1[0], t2[0]][ws]
+    end_time = [t1[-1], t2[-1]][we]
+
+    rospy.logdebug(f"starts_latest: {ws} ends_soonest: {we}")
+
+    # New common time vector for resampling
+    new_time = np.linspace(start_time, end_time, int((end_time - start_time) * sampling_rate))
+    new_longer_time_for_reference = np.linspace(t1[0], t1[-1], int((t1[-1]-t1[0])*sampling_rate))
+
+    # Linear interpolation for resampling
+    interp1 = interp1d(t1, y1, kind='linear')
+    interp2 = interp1d(t2, y2, kind='linear')
+
+    # Resample both signals
+    y1_ = interp1(new_longer_time_for_reference)
+    y2_ = interp2(new_time)
+
+
+    #y1_ = np.array(imu_list1)
+    #y2_ = np.array(imu_list2)
+    correlation = signal.correlate(y1_, y2_, mode="valid")
+    lags = signal.correlation_lags(y1_.size, y2_.size, mode="valid")
+    found_delay = lags[np.argmax(correlation)]
+    #found_delay = find_delay.find_delay(list(imu_list1), list(imu_list2), freq_array_1=100, freq_array_2=100, compute_envelope=False, verbosity=0)
+    rospy.logdebug(found_delay)
+    rospy.loginfo(f"i think this is the index, {found_delay}, so this should be the lag delay {found_delay/sampling_rate}[s],\n\t\t\t but combined with the publication lag it should be something like {found_delay/sampling_rate + publication_lag}")
+    r.sleep()
+    exit()
+
