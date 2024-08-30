@@ -15,4 +15,4 @@ testing with ximus also works
 
 the difference in delay i found was quite high of around 20ms.
 
-
+![delay zoomed](/delay_image_zoomed.png)
