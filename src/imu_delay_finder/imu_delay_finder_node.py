@@ -25,10 +25,10 @@ def callback(some_deque : deque, imu_msg : Imu, name: str) -> None:
 
 rospy.init_node("find_delay_between_imus")
 
-rospy.Subscriber("imu1", Imu, callback=lambda msg: callback(imu_list1,msg,"1") )
-rospy.Subscriber("imu2", Imu, callback=lambda msg: callback(imu_list2,msg,"2") )
+rospy.Subscriber(rospy.get_param("~imu1" ,"imu1"), Imu, callback=lambda msg: callback(imu_list1,msg,"1") )
+rospy.Subscriber(rospy.get_param("~imu2" ,"imu2"), Imu, callback=lambda msg: callback(imu_list2,msg,"2") )
 
-r = rospy.Rate(10)
+r = rospy.Rate(5)
 
 pub = rospy.Publisher("d", Float64)
 
@@ -52,7 +52,7 @@ def look_at_signal(t1,t2,y1,y2, new_time):
 
     #print(correlation.size)
 
-    print(f"idk:{-found_delay/sampling_rate} : {np.sum(correlation)}")
+    #print(f"idk:{-found_delay/sampling_rate} : {np.sum(correlation)}")
     #val.data = found_delay/sampling_rate
     #val.data = -(found_delay)/sampling_rate ## draw the graphs and you will see why
     return correlation, lags
@@ -73,7 +73,7 @@ def explode_imu_msg_list(Iy):
         linear_acceleration_y.append(iIy.linear_acceleration.y)
         linear_acceleration_z.append(iIy.linear_acceleration.z)
         
-    return  np.array(ang_velocity_x), np.array(ang_velocity_y), np.array(ang_velocity_z), np.array(linear_acceleration_x), np.array(linear_acceleration_y), np.array(linear_acceleration_z),
+    return  np.array(ang_velocity_x), np.array(ang_velocity_y), np.array(ang_velocity_z), np.array(linear_acceleration_x), np.array(linear_acceleration_y), np.array(linear_acceleration_z)
 
 coor = deque(maxlen=10)
 
@@ -113,7 +113,8 @@ while not rospy.is_shutdown() :
     rospy.logdebug(f"starts_latest: {ws} ends_soonest: {we}")
 
     # New common time vector for resampling
-    new_time = np.linspace(start_time, end_time, int((end_time - start_time) * sampling_rate))
+    #new_time = np.linspace(start_time, end_time, int((end_time - start_time) * sampling_rate))
+    new_time = np.linspace(start_time, end_time, 500)
     
 
     coora, lags = look_at_signal(t1,t2,a1,a2, new_time)
@@ -129,7 +130,12 @@ while not rospy.is_shutdown() :
         r.sleep()
         continue
     else:
-        cor_all = np.sum(coor,axis=0)
+        try:
+            cor_all = np.sum(coor,axis=0)
+        except:
+            for fff in coor:
+                print(fff.size)
+            #print(coor)
     val = Float64()
     
     #print(correlation.size)
